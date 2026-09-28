@@ -1,0 +1,572 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-enrich",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "3eef6a20-b193-4834-a31e-cff24bc3d30f",
+      "name": "Webhook",
+      "webhookId": "975d31e0-ab3e-49b5-a664-59125584cef3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || {};\n\nconst website = body.website;\n\nif (!website) {\n  throw new Error(\"Website URL is required\");\n}\n\nconst defaultICP = {\n  industries: [\"Technology\", \"Software\", \"SaaS\"],\n  companySizes: [\"Startup\", \"Small\", \"Mid-size\", \"Enterprise\"],\n  locations: [\"USA\", \"United States\", \"India\", \"UK\", \"Canada\"],\n  businessModels: [\"B2B\", \"Subscription-based\", \"SaaS\"],\n  technologies: [\"AWS\", \"Docker\", \"Kubernetes\", \"Python\", \"JavaScript\"]\n};\n\nconst userICP = body.icp || {};\n\nreturn [\n  {\n    json: {\n      website: website.trim(),\n\n      icp: {\n        industries: userICP.industries || defaultICP.industries,\n        companySizes: userICP.companySizes || defaultICP.companySizes,\n        locations: userICP.locations || defaultICP.locations,\n        businessModels: userICP.businessModels || defaultICP.businessModels,\n        technologies: userICP.technologies || defaultICP.technologies\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "68b7cfc3-c5ef-4e6f-acaa-0fcd808b9417",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const website = $json.website;\n\nif (!website) {\n  throw new Error(\"Website URL is required\");\n}\n\nlet url = website.trim();\n\nif (!/^https?:\\/\\//i.test(url)) {\n  url = \"https://\" + url;\n}\n\n// Extract hostname without using the URL constructor\nlet domain = url\n  .replace(/^https?:\\/\\//i, \"\")\n  .split(\"/\")[0]\n  .split(\"?\")[0]\n  .split(\"#\")[0]\n  .replace(/^www\\./i, \"\");\n\nif (!domain) {\n  throw new Error(\"Could not extract domain\");\n}\n\nreturn [\n  {\n    json: {\n      website: url,\n      domain: domain\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "fd34bd61-2a19-4dfa-baa0-1cbb366a419a",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "url": "=https://r.jina.ai/{{ $json.website }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        656,
+        0
+      ],
+      "id": "3612ba03-6053-4638-b44c-f1260e599641",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json.data;\n\nif (!data) {\n  throw new Error(\"No website content received\");\n}\n\nconst content = data\n  .replace(/\\n{3,}/g, \"\\n\\n\")\n  .trim();\n\nconst website = $('Code in JavaScript1').first().json.website;\nconst domain = $('Code in JavaScript1').first().json.domain;\n\nreturn [\n  {\n    json: {\n      website,\n      domain,\n      content,\n      contentLength: content.length\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        16
+      ],
+      "id": "6c1c66bf-17b1-4e9e-860f-6aac02e2c925",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+             
+              "Authorization": "Bearer YOUR_GROQ_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "=json",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "jsonBody": "={{\n  {\n    model: \"qwen/qwen3.8-27b\",\n\n    messages: [\n      {\n        role: \"system\",\n        content: \"You are a company data extraction engine. Return only valid JSON.\"\n      },\n\n      {\n        role: \"user\",\n\n        content: `You are a company data extraction engine.\n\nYour ONLY task is to extract structured company information from the supplied website content.\n\nYou MUST return exactly these 11 fields:\n\ncompany_name\ndescription\nindustry\nbusiness_model\nproducts_services\ntarget_customers\ncompany_size\nlocation\ntechnologies\ngrowth_signals\nconfidence\n\nRULES:\n\n1. Use ONLY information explicitly supported by the supplied content.\n2. Never invent, guess, or assume facts.\n3. If a field cannot be determined, use null.\n4. products_services, technologies, and growth_signals MUST be arrays.\n5. confidence MUST be a number between 0 and 1.\n6. Return ONLY the JSON object.\n7. Do not use markdown.\n8. Do not include explanations outside the JSON object.\n9. Do NOT return mission.\n10. Do NOT return commitments.\n11. Do NOT return any additional fields.\n\nINDUSTRY RULE:\n\n- Return ONLY ONE primary industry.\n- Do NOT return multiple industries.\n- Do NOT return a comma-separated list.\n- Choose the single best-supported primary industry.\n\nExamples:\n\nTechnology\nSoftware\nSaaS\nFinTech\nHealthcare\nE-commerce\nEducation\nManufacturing\nLogistics\nTravel\nFinancial Services\n\nIf the primary industry cannot be determined, return null.\n\nBUSINESS MODEL RULE:\n\n- Return the most clearly supported business model.\n\nExamples:\n\nB2B\nB2C\nB2B2C\nSubscription-based\nSaaS\nMarketplace\n\n- Do not invent a business model.\n- If it cannot be determined, return null.\n\nCOMPANY SIZE RULE:\n\n- Only return a size if explicitly supported.\n- Allowed values:\n\nStartup\nSmall\nMid-size\nEnterprise\n\n- Do NOT use \"Global\" as company size.\n- Do NOT infer company size simply because a company is famous.\n- Otherwise return null.\n\nLOCATION RULE:\n\n- Return the company's primary location only when supported.\n- Do not infer location from the domain.\n- Do NOT use \"Global\" as a location.\n- Otherwise return null.\n\nTECHNOLOGY RULE:\n\n- Prioritize the DETECTED TECHNOLOGIES list.\n- Do not invent technologies.\n- technologies MUST be an array.\n\nGROWTH SIGNAL RULE:\n\nOnly include actual supported signals such as:\n\nhiring\nexpansion\nacquisitions\nfunding\nnew markets\nmajor launches\nincreased adoption\ninvestment\nbusiness expansion\n\nDo not treat generic marketing language as a growth signal.\n\nIf there are no supported growth signals, return [].\n\nPRODUCTS AND SERVICES RULE:\n\n- Return actual products or services explicitly supported.\n- Do not invent products.\n- Return an array.\n- If unknown, return [].\n\nTARGET CUSTOMERS RULE:\n\n- Return customer types explicitly supported.\n- Do not infer customers.\n- If unknown, return null.\n\nCONFIDENCE RULE:\n\nReturn a number between 0 and 1.\n\nHigher confidence means the supplied content clearly supports most extracted fields.\n\nRequired JSON structure:\n\n{\n  \"company_name\": null,\n  \"description\": null,\n  \"industry\": null,\n  \"business_model\": null,\n  \"products_services\": [],\n  \"target_customers\": null,\n  \"company_size\": null,\n  \"location\": null,\n  \"technologies\": [],\n  \"growth_signals\": [],\n  \"confidence\": null\n}\n\nHOMEPAGE CONTENT:\n\n${$json.ai_input.homepage || \"\"}\n\nABOUT PAGE CONTENT:\n\n${$json.ai_input.about || \"\"}\n\nDETECTED TECHNOLOGIES:\n\n${JSON.stringify($json.ai_input.technologies || [])}\n\nNEWS DATA:\n\n${JSON.stringify($json.ai_input.news || [])}`\n      }\n    ],\n\n    temperature: 0,\n\n    response_format: {\n      type: \"json_object\"\n    }\n  }\n}}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        624,
+        336
+      ],
+      "id": "0a22a44a-55e2-40f5-b16b-b75f0c809d86",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $json.choices?.[0]?.message?.content;\n\nif (!response) {\n  throw new Error(\"No Groq AI response received\");\n}\n\nlet analysis;\n\ntry {\n  analysis = JSON.parse(response);\n} catch (error) {\n  const match = response.match(/\\{[\\s\\S]*\\}/);\n\n  if (!match) {\n    throw new Error(\"Groq response is not valid JSON\");\n  }\n\n  try {\n    analysis = JSON.parse(match[0]);\n  } catch (parseError) {\n    throw new Error(\"Could not parse Groq JSON response\");\n  }\n}\n\nreturn [\n  {\n    json: {\n      success: true,\n      analysis: analysis\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        336
+      ],
+      "id": "6500ba61-cf1e-4cb4-9b4f-afb756ebf2c0",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1680,
+        336
+      ],
+      "id": "76411738-3c42-46e4-a779-a6de3c1c3b5e",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const analysis = $json.analysis;\n\nif (!analysis) {\n  throw new Error(\"No company analysis found\");\n}\n\n// ======================================\n// ICP CONFIGURATION\n// ======================================\n\nconst defaultICP = {\n  industries: [\"Technology\", \"Software\", \"SaaS\"],\n  companySizes: [\"Startup\", \"Small\", \"Mid-size\", \"Enterprise\"],\n  locations: [\"USA\", \"United States\", \"India\", \"UK\", \"Canada\"],\n  businessModels: [\"B2B\", \"Subscription-based\", \"SaaS\"],\n  technologies: [\n    \"AWS\",\n    \"Docker\",\n    \"Kubernetes\",\n    \"Python\",\n    \"JavaScript\"\n  ]\n};\n\nconst ICP = {\n  industries: $json.icp?.industries || defaultICP.industries,\n\n  companySizes:\n    $json.icp?.companySizes || defaultICP.companySizes,\n\n  locations:\n    $json.icp?.locations || defaultICP.locations,\n\n  businessModels:\n    $json.icp?.businessModels || defaultICP.businessModels,\n\n  technologies:\n    $json.icp?.technologies || defaultICP.technologies\n};\n\n// ======================================\n// HELPER\n// ======================================\n\nfunction matchesICP(value, allowedValues) {\n  if (!value || !Array.isArray(allowedValues)) {\n    return false;\n  }\n\n  const text = String(value).toLowerCase();\n\n  return allowedValues.some(item =>\n    text.includes(String(item).toLowerCase())\n  );\n}\n\n// ======================================\n// INITIALIZE\n// ======================================\n\nlet score = 0;\n\nconst breakdown = {\n  industry: 0,\n  company_size: 0,\n  geography: 0,\n  revenue: 0,\n  technology: 0,\n  growth: 0,\n  business_model: 0\n};\n\nconst reasons = [];\nconst matchedCriteria = [];\nconst missingCriteria = [];\n\n// ======================================\n// INDUSTRY — 25\n// ======================================\n\nif (analysis.industry) {\n\n  if (matchesICP(analysis.industry, ICP.industries)) {\n\n    breakdown.industry = 25;\n    score += 25;\n\n    matchedCriteria.push(\"Industry\");\n\n    reasons.push(\n      \"Industry matches the ICP\"\n    );\n\n  } else {\n\n    missingCriteria.push(\"Industry\");\n  }\n\n} else {\n\n  missingCriteria.push(\n    \"Industry — Unknown\"\n  );\n}\n\n// ======================================\n// COMPANY SIZE — 20\n// ======================================\n\nif (analysis.company_size) {\n\n  if (\n    matchesICP(\n      analysis.company_size,\n      ICP.companySizes\n    )\n  ) {\n\n    breakdown.company_size = 20;\n    score += 20;\n\n    matchedCriteria.push(\"Company Size\");\n\n    reasons.push(\n      \"Company size fits the ICP\"\n    );\n\n  } else {\n\n    missingCriteria.push(\"Company Size\");\n  }\n\n} else {\n\n  missingCriteria.push(\n    \"Company Size — Unknown\"\n  );\n}\n\n// ======================================\n// GEOGRAPHY — 15\n// ======================================\n\nif (analysis.location) {\n\n  if (\n    matchesICP(\n      analysis.location,\n      ICP.locations\n    )\n  ) {\n\n    breakdown.geography = 15;\n    score += 15;\n\n    matchedCriteria.push(\"Geography\");\n\n    reasons.push(\n      \"Geography matches the ICP\"\n    );\n\n  } else {\n\n    missingCriteria.push(\"Geography\");\n  }\n\n} else {\n\n  missingCriteria.push(\n    \"Geography — Unknown\"\n  );\n}\n\n// ======================================\n// REVENUE — 15\n// ======================================\n\n// Revenue is not currently available\n// from our enrichment sources.\n\nbreakdown.revenue = 0;\n\nmissingCriteria.push(\n  \"Revenue — Unknown\"\n);\n\n// ======================================\n// TECHNOLOGY — 10\n// ======================================\n\nif (\n  Array.isArray(analysis.technologies) &&\n  analysis.technologies.length > 0\n) {\n\n  const companyTechnologies =\n    analysis.technologies.map(\n      x => String(x).toLowerCase()\n    );\n\n  const matchedTechnologies =\n    ICP.technologies.filter(\n      expected =>\n        companyTechnologies.some(\n          actual =>\n            actual.includes(\n              String(expected).toLowerCase()\n            )\n        )\n    );\n\n  if (matchedTechnologies.length > 0) {\n\n    breakdown.technology = 10;\n    score += 10;\n\n    matchedCriteria.push(\n      \"Technology Stack\"\n    );\n\n    reasons.push(\n      `Technology match: ${matchedTechnologies.join(\", \")}`\n    );\n\n  } else {\n\n    missingCriteria.push(\n      \"Technology Stack\"\n    );\n  }\n\n} else {\n\n  missingCriteria.push(\n    \"Technology Stack — Unknown\"\n  );\n}\n\n// ======================================\n// GROWTH — 10\n// ======================================\n\nif (\n  Array.isArray(analysis.growth_signals) &&\n  analysis.growth_signals.length > 0\n) {\n\n  breakdown.growth = 10;\n  score += 10;\n\n  matchedCriteria.push(\n    \"Growth\"\n  );\n\n  reasons.push(\n    \"Positive growth signals detected\"\n  );\n\n} else {\n\n  missingCriteria.push(\n    \"Growth — No supported signals\"\n  );\n}\n\n// ======================================\n// BUSINESS MODEL — 5\n// ======================================\n\nif (analysis.business_model) {\n\n  if (\n    matchesICP(\n      analysis.business_model,\n      ICP.businessModels\n    )\n  ) {\n\n    breakdown.business_model = 5;\n    score += 5;\n\n    matchedCriteria.push(\n      \"Business Model\"\n    );\n\n    reasons.push(\n      \"Business model fits the ICP\"\n    );\n\n  } else {\n\n    missingCriteria.push(\n      \"Business Model\"\n    );\n  }\n\n} else {\n\n  missingCriteria.push(\n    \"Business Model — Unknown\"\n  );\n}\n\n// ======================================\n// FIT LEVEL\n// ======================================\n\nlet fit;\n\nif (score >= 80) {\n\n  fit = \"High Fit\";\n\n} else if (score >= 60) {\n\n  fit = \"Medium Fit\";\n\n} else {\n\n  fit = \"Low Fit\";\n}\n\n// ======================================\n// FINAL OUTPUT\n// ======================================\n\nreturn [\n  {\n    json: {\n\n      ...$json,\n\n      success: true,\n\n      company:\n        analysis.company_name,\n\n      score: score,\n\n      fit: fit,\n\n      breakdown: breakdown,\n\n      reasons: reasons,\n\n      matched_criteria:\n        matchedCriteria,\n\n      missing_criteria:\n        missingCriteria,\n\n      icp_used: ICP\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        336
+      ],
+      "id": "7225fcef-5d65-4734-b89a-ad2f03a59735",
+      "name": "ICP Scoring"
+    },
+    {
+      "parameters": {
+        "url": "=https://r.jina.ai/https://{{$json.domain}}/about",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        960,
+        -176
+      ],
+      "id": "b1c12fb0-c7f0-456a-b7d7-3f5fd8cf6b90",
+      "name": "Company Enrichment"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1104,
+        -16
+      ],
+      "id": "0eb80042-4998-4b26-83ee-48008f99510e",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1328,
+        -16
+      ],
+      "id": "af57af27-7bce-4ed7-8750-99cb2912b079",
+      "name": "Technology Detection"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = ($json.data || \"\").toLowerCase();\n\n// Get the original merged data\nconst merged = $('Merge').first().json;\n\nconst technologies = [];\n\nconst patterns = {\n  \"Microsoft Azure\": [\"azure\", \"azureedge.net\", \"azurewebsites.net\"],\n  \"Microsoft Clarity\": [\"clarity.ms\"],\n  \"Google Analytics\": [\n    \"google-analytics.com\",\n    \"googletagmanager.com\",\n    \"gtag(\"\n  ],\n  \"Google Tag Manager\": [\"googletagmanager.com\"],\n  \"Cloudflare\": [\"cloudflare\", \"cdnjs.cloudflare.com\"],\n  \"React\": [\"react\", \"react-dom\"],\n  \"Next.js\": [\"_next/\", \"next.js\"],\n  \"WordPress\": [\"wp-content\", \"wp-includes\", \"wordpress\"],\n  \"Bootstrap\": [\"bootstrap.css\", \"bootstrap.min.css\"],\n  \"jQuery\": [\"jquery.js\", \"jquery.min.js\", \"jquery(\"],\n  \"Tailwind CSS\": [\"tailwindcss\"],\n  \"Microsoft 365\": [\"microsoft365\", \"office.com\"]\n};\n\nfor (const [technology, signatures] of Object.entries(patterns)) {\n  if (signatures.some(signature => html.includes(signature))) {\n    technologies.push(technology);\n  }\n}\n\nreturn [\n  {\n    json: {\n      ...merged,\n      technologies: [...new Set(technologies)],\n      technology_count: technologies.length\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        -16
+      ],
+      "id": "b8e994de-a612-4952-b357-132b2100889f",
+      "name": "Technology Parser"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"https://news.google.com/rss/search?q=\" + encodeURIComponent($json.domain) + \"&hl=en-US&gl=US&ceid=US:en\" }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        32,
+        336
+      ],
+      "id": "86450d8a-8469-4a35-b6ab-efa6d220e713",
+      "name": "Search / News Enrichment"
+    },
+    {
+      "parameters": {
+        "jsCode": "const xml = $json.data || \"\";\n\nif (!xml) {\n  return [{\n    json: {\n      ...$(\"Technology Parser\").first().json,\n      news: [],\n      news_count: 0,\n      news_summary_text: \"\"\n    }\n  }];\n}\n\nconst items = xml.match(/<item>[\\s\\S]*?<\\/item>/gi) || [];\n\nconst previous = $(\"Technology Parser\").first().json;\n\n// Company/domain we're searching for\nconst domain = String(previous.domain || \"\")\n  .toLowerCase()\n  .replace(/^www\\./, \"\");\n\nconst companyKeywords = domain\n  .split(\".\")[0]\n  .toLowerCase();\n\nfunction clean(value) {\n  if (!value) return \"\";\n\n  return value\n    .replace(/<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>/gi, \"$1\")\n    .replace(/<[^>]*>/g, \"\")\n    .replace(/&amp;/g, \"&\")\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/&lt;/g, \"<\")\n    .replace(/&gt;/g, \">\")\n    .replace(/\\s+/g, \" \")\n    .trim();\n}\n\nfunction getTag(item, tag) {\n  const match = item.match(\n    new RegExp(\n      `<${tag}[^>]*>([\\\\s\\\\S]*?)<\\\\/${tag}>`,\n      \"i\"\n    )\n  );\n\n  return match ? clean(match[1]) : \"\";\n}\n\n// ======================================\n// PARSE NEWS\n// ======================================\n\nconst parsedNews = items.map(item => ({\n  title: getTag(item, \"title\"),\n  published_at: getTag(item, \"pubDate\"),\n  description: getTag(item, \"description\")\n}));\n\n// ======================================\n// FILTER RELEVANT NEWS\n// ======================================\n\nconst relevantNews = parsedNews.filter(article => {\n\n  const text = (\n    article.title +\n    \" \" +\n    article.description\n  ).toLowerCase();\n\n  return text.includes(companyKeywords);\n});\n\n// ======================================\n// LIMIT RESULTS\n// ======================================\n\nconst news = relevantNews.slice(0, 5);\n\n// ======================================\n// OUTPUT\n// ======================================\n\nreturn [{\n  json: {\n    ...previous,\n\n    news,\n\n    news_count: news.length,\n\n    news_summary_text: news\n      .map(n =>\n        `${n.title} — ${n.published_at}`\n      )\n      .join(\"\\n\")\n      .slice(0, 3000)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        336
+      ],
+      "id": "cc2c2ed9-90fd-45aa-8a09-893393f18de3",
+      "name": "news parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "const analysis = $json.analysis;\n\nif (!analysis) {\n  throw new Error(\"No company analysis found\");\n}\n\n// ======================================\n// ORIGINAL INPUT + ICP\n// ======================================\n\nconst original = $('Code in JavaScript1').first().json;\nconst inputConfig = $('Code in JavaScript').first().json;\n\nconst icp = inputConfig.icp || null;\n\n// ======================================\n// NORMALIZE COMPANY SIZE\n// ======================================\n\nlet companySize = analysis.company_size || null;\n\nif (companySize) {\n  const size = String(companySize).toLowerCase();\n\n  if (\n    size.includes(\"startup\") ||\n    size.includes(\"start-up\")\n  ) {\n    companySize = \"Startup\";\n\n  } else if (\n    size.includes(\"small\")\n  ) {\n    companySize = \"Small\";\n\n  } else if (\n    size.includes(\"mid-size\") ||\n    size.includes(\"mid size\") ||\n    size.includes(\"medium-sized\") ||\n    size.includes(\"medium sized\")\n  ) {\n    companySize = \"Mid-size\";\n\n  } else if (\n    size.includes(\"enterprise\") ||\n    size.includes(\"large enterprise\")\n  ) {\n    companySize = \"Enterprise\";\n\n  } else {\n    companySize = null;\n  }\n}\n\n// ======================================\n// NORMALIZE BUSINESS MODEL\n// ======================================\n\nlet businessModel = analysis.business_model || null;\n\nif (businessModel) {\n  const model = String(businessModel).toLowerCase();\n\n  if (model.includes(\"subscription\")) {\n    businessModel = \"Subscription-based\";\n\n  } else if (model.includes(\"saas\")) {\n    businessModel = \"SaaS\";\n\n  } else if (model.includes(\"b2b2c\")) {\n    businessModel = \"B2B2C\";\n\n  } else if (\n    model === \"b2b\" ||\n    model.includes(\"business to business\")\n  ) {\n    businessModel = \"B2B\";\n\n  } else if (\n    model === \"b2c\" ||\n    model.includes(\"business to consumer\")\n  ) {\n    businessModel = \"B2C\";\n\n  } else if (model.includes(\"marketplace\")) {\n    businessModel = \"Marketplace\";\n\n  } else {\n    businessModel = null;\n  }\n}\n\n// ======================================\n// NORMALIZE LOCATION\n// ======================================\n\nlet location = analysis.location || null;\n\nif (location) {\n  const loc = String(location).toLowerCase().trim();\n\n  if (\n    loc === \"global\" ||\n    loc === \"worldwide\" ||\n    loc === \"international\"\n  ) {\n    location = null;\n  }\n}\n\n// ======================================\n// NEWS\n// ======================================\n\nlet news = [];\n\ntry {\n  const newsData = $(\"News Parser\").first().json;\n\n  if (Array.isArray(newsData.news)) {\n    news = newsData.news;\n  }\n} catch (error) {\n  news = [];\n}\n\n// ======================================\n// ARRAYS\n// ======================================\n\nconst technologies = Array.isArray(analysis.technologies)\n  ? analysis.technologies\n  : [];\n\nconst productsServices = Array.isArray(analysis.products_services)\n  ? analysis.products_services\n  : [];\n\nconst growthSignals = Array.isArray(analysis.growth_signals)\n  ? analysis.growth_signals\n  : [];\n\n// ======================================\n// NORMALIZED ANALYSIS\n// ======================================\n\nconst normalizedAnalysis = {\n  company_name: analysis.company_name || null,\n\n  description: analysis.description || null,\n\n  industry: analysis.industry || null,\n\n  business_model: businessModel,\n\n  products_services: productsServices,\n\n  target_customers: analysis.target_customers || null,\n\n  company_size: companySize,\n\n  location: location,\n\n  technologies,\n\n  growth_signals: growthSignals,\n\n  confidence:\n    typeof analysis.confidence === \"number\"\n      ? analysis.confidence\n      : null\n};\n\n// ======================================\n// FINAL OUTPUT\n// ======================================\n\nreturn [\n  {\n    json: {\n      ...$json,\n\n      // Preserve user's dynamic ICP\n      icp: icp,\n\n      analysis: normalizedAnalysis,\n\n      company_name: normalizedAnalysis.company_name,\n\n      domain: original.domain || null,\n\n      website: original.website || null,\n\n      description: normalizedAnalysis.description,\n\n      industry: normalizedAnalysis.industry,\n\n      business_model: normalizedAnalysis.business_model,\n\n      products_services: productsServices,\n\n      target_customers: normalizedAnalysis.target_customers,\n\n      company_size: normalizedAnalysis.company_size,\n\n      location: normalizedAnalysis.location,\n\n      technologies,\n\n      technology_count: technologies.length,\n\n      growth_signals: growthSignals,\n\n      news,\n\n      news_count: news.length,\n\n      confidence: normalizedAnalysis.confidence\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        352
+      ],
+      "id": "a9263051-8ac4-4d6e-8f41-7bd6d2eaca7c",
+      "name": "Normalize Final Data"
+    },
+    {
+      "parameters": {
+        "tableId": "leads",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "company_name",
+              "fieldValue": "={{$json.company_name}}"
+            },
+            {
+              "fieldId": "domain",
+              "fieldValue": "={{$json.domain}}"
+            },
+            {
+              "fieldId": "website",
+              "fieldValue": "={{$json.website}}"
+            },
+            {
+              "fieldId": "description",
+              "fieldValue": "={{$json.description}}"
+            },
+            {
+              "fieldId": "industry",
+              "fieldValue": "={{$json.industry}}"
+            },
+            {
+              "fieldId": "business_model",
+              "fieldValue": "={{$json.business_model}}"
+            },
+            {
+              "fieldId": "target_customers",
+              "fieldValue": "={{$json.target_customers}}"
+            },
+            {
+              "fieldId": "company_size",
+              "fieldValue": "={{$json.company_size}}"
+            },
+            {
+              "fieldId": "location",
+              "fieldValue": "={{$json.location}}"
+            },
+            {
+              "fieldId": "products_services",
+              "fieldValue": "={{$json.products_services}}"
+            },
+            {
+              "fieldId": "technologies",
+              "fieldValue": "={{$json.technologies}}"
+            },
+            {
+              "fieldId": "growth_signals",
+              "fieldValue": "={{$json.growth_signals}}"
+            },
+            {
+              "fieldId": "news",
+              "fieldValue": "={{$json.news}}"
+            },
+            {
+              "fieldId": "confidence",
+              "fieldValue": "={{$json.confidence}}"
+            },
+            {
+              "fieldId": "score",
+              "fieldValue": "={{$json.score}}"
+            },
+            {
+              "fieldId": "fit",
+              "fieldValue": "={{$json.fit}}"
+            },
+            {
+              "fieldId": "breakdown",
+              "fieldValue": "={{$json.breakdown}}"
+            },
+            {
+              "fieldId": "reasons",
+              "fieldValue": "={{$json.reasons}}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1456,
+        336
+      ],
+      "id": "b34a3903-c55d-4fdd-b6e0-645bbcf79a8f",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "El56ENMtnS4BSVQ3",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const homepage = ($json.content || \"\").slice(0, 5000);\nconst about = ($json.data || \"\").slice(0, 5000);\n\nconst technologies = Array.isArray($json.technologies)\n  ? $json.technologies\n  : [];\n\nconst news = Array.isArray($json.news)\n  ? $json.news.slice(0, 3)\n  : [];\n\nreturn [\n  {\n    json: {\n      ...$json,\n\n      ai_input: {\n        homepage,\n        about,\n        technologies,\n        news\n      }\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        336
+      ],
+      "id": "b082e608-2a35-478a-a3fe-f3411e634e1b",
+      "name": "Code in JavaScript4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Company Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Normalize Final Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ICP Scoring": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Company Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Technology Detection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Technology Detection": {
+      "main": [
+        [
+          {
+            "node": "Technology Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Technology Parser": {
+      "main": [
+        [
+          {
+            "node": "Search / News Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search / News Enrichment": {
+      "main": [
+        [
+          {
+            "node": "news parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "news parser": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Final Data": {
+      "main": [
+        [
+          {
+            "node": "ICP Scoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b5b42728-762a-43c8-912b-100bd75a97bd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "47d484cb6571bbb8387fa5e23eb81551c6718cdab088daee5defd70f9d3bd2ba"
+  },
+  "nodeGroups": [],
+  "id": "1IEEPMvd14GFlmWM",
+  "tags": []
+}
